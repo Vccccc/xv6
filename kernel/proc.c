@@ -196,6 +196,16 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  // FIXED USYSCALL
+  struct usyscall *u = (struct usyscall *)kalloc();
+  memset(u, 0, PGSIZE);
+  u->pid = p->pid;
+  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)u, PTE_R | PTE_U) < 0)
+  {
+    uvmfree(pagetable, 0);
+    kfree(u);
+    return 0;
+  }
   return pagetable;
 }
 
@@ -206,6 +216,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 1);
   uvmfree(pagetable, sz);
 }
 
@@ -234,6 +245,8 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+
+
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
