@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "syscall.h"
 
 uint64
 sys_exit(void)
@@ -81,6 +82,37 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  uint64 baseva;
+  int pages;
+  uint64 maskva;
+  int mask = 0;
+  struct proc *p = myproc();
+  pagetable_t pagetable = p->pagetable;
+  if(argaddr(0, &baseva) < 0)
+  {
+    return -1;
+  }
+  if(argint(1, &pages) < 0)
+  {
+    return -1;
+  }
+  if(argaddr(2, &maskva) < 0)
+  {
+    return -1;
+  }
+  for(int i = 0; i < pages; i++)
+  {
+    pte_t* pte = walk(pagetable, PGROUNDDOWN(baseva) + (i * PGSIZE), 0);
+    if(pte && (*pte & PTE_A))
+    {
+      mask |= (1 << i);
+      *pte &= (~PTE_A);
+    }
+  }
+  if(copyout(pagetable, maskva, (char*)&mask, sizeof mask) < 0)
+  {
+    return -1;
+  }
   return 0;
 }
 #endif
@@ -107,3 +139,4 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
