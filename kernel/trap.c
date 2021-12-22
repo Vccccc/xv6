@@ -78,7 +78,20 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
+  {
+    if(p->alarm.ticks && !p->shadow_trapframe)
+    {
+      p->alarm.expired++;
+      if(p->alarm.expired == p->alarm.ticks)
+      {
+        p->alarm.expired = 0;
+        p->shadow_trapframe = kalloc();
+        *p->shadow_trapframe = *p->trapframe;
+        p->trapframe->epc = p->alarm.handler;
+      }
+    }
     yield();
+  }
 
   usertrapret();
 }
@@ -149,9 +162,23 @@ kerneltrap()
     panic("kerneltrap");
   }
 
+  struct proc* p = myproc();
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  if(which_dev == 2 && p != 0 && p->state == RUNNING)
+  {
+    if(p->alarm.ticks && !p->shadow_trapframe)
+    {
+      p->alarm.expired++;
+      if(p->alarm.expired == p->alarm.ticks)
+      {
+        p->alarm.expired = 0;
+        p->shadow_trapframe = kalloc();
+        *p->shadow_trapframe = *p->trapframe;
+        p->trapframe->epc = p->alarm.handler;
+      }
+    }
     yield();
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
