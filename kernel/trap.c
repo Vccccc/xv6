@@ -65,6 +65,36 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 0xf && r_stval() < MAXVA){
+    uint64 va = r_stval();
+    pte_t* pte = walk(p->pagetable, va, 0);
+    int killed = 1;
+    if(pte){
+      int flags = PTE_FLAGS(*pte);
+      if(flags & PTE_COW){
+        uint64 ground_down_va = PGROUNDDOWN(va);
+        uint64 pa = PTE2PA(*pte);
+        uint8 ref_count = get_ref_count_with_lock(pa);
+        assert(ref_count >= 1, "invalid ref count\n");
+        
+        flags &= ~PTE_COW;
+        flags |= PTE_W;
+        if(ref_count > 1){
+          char* newpa = (char*)kalloc();
+          if(newpa)
+          {
+            memmove(newpa, (const char*)pa, PGSIZE);
+            uvmunmap(p->pagetable, ground_down_va, 1, 1);
+            mappages(p->pagetable, ground_down_va, PGSIZE, (uint64)newpa, flags);
+            killed = 0;
+          }
+        } else if(ref_count == 1){
+          *pte = PA2PTE(pa) | flags;
+          killed = 0;
+        }
+      }
+    }
+    p->killed = killed;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

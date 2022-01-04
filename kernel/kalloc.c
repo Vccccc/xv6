@@ -10,10 +10,31 @@
 #include "defs.h"
 
 void freerange(void *pa_start, void *pa_end);
+void increase_ref_count(uint64 pa);
+void decrease_ref_count(uint64 pa);
+uint8 get_ref_count(uint64 pa);
+void increase_ref_count_with_lock(uint64 pa);
+void decrease_ref_count_with_lock(uint64 pa);
+uint8 get_ref_count_with_lock(uint64 pa);
+void init_ref_count();
+
+void assert(int expression, char* msg)
+{
+  if(!expression)
+  {
+    panic(msg);
+  }
+}
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
-
+#define MAX_REF_COUNT ((PHYSTOP - KERNBASE) / PGSIZE)
+#define PA2IDX(pa) ((pa - KERNBASE) / PGSIZE)
+struct ref_count
+{
+  struct spinlock lock;
+  uint8 count[MAX_REF_COUNT];
+} kref_count;
 struct run {
   struct run *next;
 };
@@ -27,6 +48,8 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&kref_count.lock, "krefcount");
+  init_ref_count();
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -51,6 +74,14 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  acquire(&kref_count.lock);
+  assert(get_ref_count((uint64)pa) > 0, "ref count must greater than 0\n");
+  decrease_ref_count((uint64)pa);
+  if(get_ref_count(((uint64)pa)) > 0)
+  {
+    release(&kref_count.lock);
+    return;
+  }
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -60,6 +91,7 @@ kfree(void *pa)
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
+  release(&kref_count.lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -70,13 +102,69 @@ kalloc(void)
 {
   struct run *r;
 
+  acquire(&kref_count.lock);
   acquire(&kmem.lock);
   r = kmem.freelist;
   if(r)
+  {
+    assert(get_ref_count((uint64)r) == 0, "ref count not 0\n");
     kmem.freelist = r->next;
+    increase_ref_count((uint64)r);
+  }
   release(&kmem.lock);
+  release(&kref_count.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void increase_ref_count(uint64 pa)
+{
+  kref_count.count[PA2IDX(pa)]++;
+  assert(kref_count.count[PA2IDX(pa)] > 0, "ref count invalid\n");
+}
+
+void decrease_ref_count(uint64 pa)
+{
+  kref_count.count[PA2IDX(pa)]--;
+  assert(kref_count.count[PA2IDX(pa)] >= 0, "ref count invalid\n");
+}
+
+uint8 get_ref_count(uint64 pa)
+{
+  return kref_count.count[PA2IDX(pa)];
+}
+
+void increase_ref_count_with_lock(uint64 pa)
+{
+  acquire(&kref_count.lock);
+  increase_ref_count(pa);
+  release(&kref_count.lock);
+}
+
+void decrease_ref_count_with_lock(uint64 pa)
+{
+  acquire(&kref_count.lock);
+  decrease_ref_count(pa);
+  release(&kref_count.lock);
+}
+
+uint8 get_ref_count_with_lock(uint64 pa)
+{
+  uint8 count;
+  acquire(&kref_count.lock);
+  count = get_ref_count(pa);
+  release(&kref_count.lock);
+  return count;
+}
+
+void init_ref_count()
+{
+  acquire(&kref_count.lock);
+  for(int i = 0; i < MAX_REF_COUNT; i++)
+  {
+    kref_count.count[i] = 1;
+  }
+  release(&kref_count.lock);
 }
