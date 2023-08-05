@@ -408,7 +408,9 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     n = PGSIZE - (srcva - va0);
     if(n > max)
       n = max;
-
+    
+    // The kernel maps each physical RAM address to the corresponding kernel virtual address,
+    // so copyinstr can directly copy string bytes from pa0 to dst.
     char *p = (char *) (pa0 + (srcva - va0));
     while(n > 0){
       if(*p == '\0'){
